@@ -1,0 +1,8 @@
+version: '3.8'
+services:
+  lucida-bot:
+    build: .
+    volumes:
+      - ./.env:/app/.env
+      - ./data:/app/data
+    restart: unless-stopped
