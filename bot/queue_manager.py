@@ -2,8 +2,45 @@ import asyncio
 import time
 import os
 import shutil
+import json
 from bot import config, database, lucida_wrapper
 from pyrogram.errors import MessageNotModified, FloodWait
+
+async def get_audio_info(file_path):
+    cmd = [
+        "ffprobe", "-v", "quiet", "-print_format", "json",
+        "-show_format", "-show_streams", file_path
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await proc.communicate()
+        data = json.loads(stdout)
+        
+        fmt = data.get("format") or {}
+        duration = float(fmt.get("duration") or 0)
+        mins = int(duration // 60)
+        secs = int(duration % 60)
+        duration_str = f"{mins}:{secs:02d}"
+        
+        tags = fmt.get("tags") or {}
+        has_lyrics = any(k.lower() in ['lyrics', 'unsyncedlyrics', 'sylt', 'uslt'] for k in tags.keys())
+        if not has_lyrics:
+            for stream in data.get("streams") or []:
+                stream_tags = stream.get("tags") or {}
+                if any(k.lower() in ['lyrics', 'unsyncedlyrics', 'sylt', 'uslt'] for k in stream_tags.keys()):
+                    has_lyrics = True
+                    break
+        
+        lyrics_str = "Available" if has_lyrics else "Unavailable"
+        
+        return duration_str, lyrics_str
+    except Exception as e:
+        print(f"Error getting audio info: {e}")
+        return "Unknown", "Unknown"
 
 download_queue = asyncio.Queue()
 
@@ -96,9 +133,11 @@ async def process_queue(bot_client, user_client):
                         target_chat = message.chat.id
                         bot_info = await bot_client.get_me()
                         
+                        duration, lyrics = await get_audio_info(file_path)
+                        
                         # Always upload to the Bot first via User Client to bypass 50MB limit
                         # We embed the target chat ID in the caption so the bot can route it!
-                        routing_caption = f"🎵 Uploaded via Lucida Bot\n\n#ROUTING_ID_{target_chat}"
+                        routing_caption = f"🎵 Uploaded via Lucida Bot\nDuration: {duration}\nLyrics: {lyrics}\n\n#ROUTING_ID_{target_chat}"
                         
                         await user_client.send_document(
                             chat_id=bot_info.username,
